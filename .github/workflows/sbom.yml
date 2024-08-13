@@ -1,0 +1,89 @@
+# Uses the dependency-graph/sboms REST API to aquire an SPDX SBOM, attest with build provenance, and upload as an artifact.
+name: Generate SBOM
+on:
+  push:
+    branches: [ "master" ]
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+  attestations: write
+jobs:
+  gen-sbom:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    # Use CLI tooling
+    # - name: Generate SBOM via CLI
+    #   run: | 
+    #     gh ext install advanced-security/gh-sbom
+    #     gh sbom > gh-spdx.json
+    # Calls the REST API: https://docs.github.com/en/rest/dependency-graph/sboms?apiVersion=2022-11-28
+    - uses: advanced-security/generate-sbom-action@v1
+      id: gensbom
+    - name: Rename SBOM File to spdx- prefix
+      run: | 
+        mv ${{ steps.gensbom.outputs.fileName }}  spdx-${{ steps.gensbom.outputs.fileName }}  
+    - name: Download CycloneDX CLI
+      run: |
+          LATEST_RELEASE=$(curl -s https://api.github.com/repos/CycloneDX/cyclonedx-cli/releases/latest | jq -r '.tag_name')
+          curl -Lo cyclonedx https://github.com/CycloneDX/cyclonedx-cli/releases/download/${LATEST_RELEASE}/cyclonedx-linux-x64
+          chmod +x cyclonedx          
+    #fixes: https://github.com/CycloneDX/cyclonedx-cli/issues/316 - writes to temp /tmp/fromspdx/spdx-fixed.json
+    - name: workaround cyclonedx-cli/issues/316
+      run: |
+        cat spdx-${{ steps.gensbom.outputs.fileName }} | sed 's/PACKAGE-MANAGER/PACKAGE_MANAGER/g; s/"DESCRIBE"/"DESCRIBES"/g' > /tmp/spdx.json           
+    - name: Convert SPDX SBOM to CycloneDX
+      run: |
+          FILE_NAME="${{ steps.gensbom.outputs.fileName }}"
+          BASENAME=$(basename "$FILE_NAME" .json)
+          echo "BASENAME=$BASENAME" >> $GITHUB_ENV
+          cdxBASENAME="cdx-${BASENAME}"
+          echo "cdxBASENAME=$cdxBASENAME" >> $GITHUB_ENV
+          ./cyclonedx convert --input-file /tmp/spdx.json  --output-file "${cdxBASENAME}.json" --input-format spdxjson --output-format json
+          ./cyclonedx convert --input-file /tmp/spdx.json  --output-file "${cdxBASENAME}.xml" --input-format spdxjson --output-format xml
+          ls cdx*
+    - name: sbom quality score install (interlynk-io/sbomqs)
+      run: |
+        # go version
+        # go env GOPATH
+        # ls -ls "$(go env GOPATH)/bin"
+        go install github.com/interlynk-io/sbomqs@latest
+        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+    - name: sbomqs spdx quality score
+      run: |
+        sbomqs score spdx-${{ steps.gensbom.outputs.fileName }} > spdx-${{ env.BASENAME }}-sbomqs.txt
+        echo "" >> spdx-${{ env.BASENAME }}-sbomqs.txt
+        sbomqs share spdx-${{ steps.gensbom.outputs.fileName }}  >> spdx-${{ env.BASENAME }}-sbomqs.txt
+        cat spdx-${{ env.BASENAME }}-sbomqs.txt
+    - name: Generate artifact attestations
+      id: genprovenance
+      uses: actions/attest-build-provenance@v1
+      with:          
+        subject-path: |
+          spdx-${{ steps.gensbom.outputs.fileName }}
+          ${{ env.cdxBASENAME }}.xml
+          ${{ env.cdxBASENAME }}.json
+          spdx-${{ env.BASENAME }}-sbomqs.txt
+    - uses: austenstone/job-summary-to-pdf@main
+      id: job-summary
+      with:
+          create-pdf: false
+          create-pdf-artifact: false
+    - name: Copy Attestation Manfiest to output
+      run: |
+        echo "Attestation Bundle Path: ${{ steps.genprovenance.outputs.bundle-path }}" 
+        cp ${{ steps.genprovenance.outputs.bundle-path }} attestation.jsonl
+        cp "${{ steps.job-summary.outputs.html-file }}" attestation.html
+    - uses: actions/upload-artifact@v4
+      with:
+        name: sboms
+        path: |
+              spdx-${{ steps.gensbom.outputs.fileName }}
+              ${{ env.cdxBASENAME }}.xml
+              ${{ env.cdxBASENAME }}.json
+              spdx-${{ env.BASENAME }}-sbomqs.txt
+              attestation.jsonl
+              attestation.html
+
+        
