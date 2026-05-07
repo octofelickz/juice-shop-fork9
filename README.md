@@ -23,7 +23,7 @@
 > [First you 😂😂then you 😢](https://twitter.com/kramse/status/1073168529405472768)
 > ([@kramse](https://twitter.com/kramse)) —
 > [But this doesn't have anything to do with juice.](https://twitter.com/coderPatros/status/1199268774626488320)
-> ([@coderPatros' wife](https://twitter.com/coderPatros))
+> ([@coderPatros' wife](https://twitter.com/coderPatros)) 
 
 OWASP Juice Shop is probably the most modern and sophisticated insecure web application! It can be used in security
 trainings, awareness demos, CTFs and as a guinea pig for security tools! Juice Shop encompasses vulnerabilities from the
